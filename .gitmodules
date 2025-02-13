@@ -1,0 +1,6 @@
+[submodule "opcodes"]
+	path = opcodes
+	url = git@github.com:vusec/hw-fuzzing-riscv-opcodes.git
+[submodule "LibAFL"]
+	path = LibAFL
+	url = git@github.com:vusec/hw-fuzzing-libafl.git

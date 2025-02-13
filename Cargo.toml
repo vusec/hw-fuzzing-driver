@@ -1,0 +1,22 @@
+[package]
+name = "riscv_mutator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ahash = "0.8.3"
+clap = { version = "=4.2.7", features = ["derive"] }
+colored = "2.0.0"
+crossterm = "0.26.1"
+hashbrown = "0.13.2"
+#libafl = { version = "0.10.0", features = ["fork", "errors_backtrace"] }
+libm = "0.2.7"
+log = "0.4.17"
+nix = "0.26.2"
+num-traits = "0.2.15"
+postcard = "1.0.4"
+rand = "0.8.5"
+serde = "1.0.163"
+tui = "0.19.0"
+
+libafl = { path = "LibAFL/libafl", features = ["fork", "errors_backtrace"] }
