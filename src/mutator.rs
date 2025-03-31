@@ -1,6 +1,11 @@
-use std::cmp::max;
+use std::num::NonZero;
+use crate::mutator::alloc::borrow::Cow;
 
+use libafl_bolts::nonzero;
 use libafl::prelude::*;
+use libafl_bolts::tuples::tuple_list_type;
+use libafl_bolts::prelude::{tuple_list, Rand};
+use libafl_bolts::Named;
 
 use crate::{
     generator::InstGenerator,
@@ -55,15 +60,14 @@ where
         &mut self,
         state: &mut S,
         input: &mut I,
-        _stage_idx: i32,
     ) -> Result<MutationResult, Error> {
         self.mutate_impl(state.rand_mut(), input.insts_mut())
     }
 }
 
 impl Named for RiscVInstructionMutator {
-    fn name(&self) -> &str {
-        "RiscVInstructionMutator"
+    fn name(&self) -> &Cow<'static, str> {
+        &Cow::Borrowed("RiscVInstructionMutator")
     }
 }
 
@@ -124,7 +128,7 @@ impl RiscVInstructionMutator {
         //   auipc x2, 0
         //   jalr x1, random_offset(x2)
         let make_call = |rng: &mut Rng| -> Vec<Instruction> {
-            let raw_offset: u32 = rng.below(64) as u32;
+            let raw_offset: u32 = rng.below(nonzero!(64)) as u32;
             // let offset: u32 = if rng.below(2) == 0 {
             //     !raw_offset
             // } else {
@@ -159,7 +163,7 @@ impl RiscVInstructionMutator {
         };
 
         let options = [make_call, make_ret];
-        let selected: usize = rng.below(options.len() as u64) as usize;
+        let selected: usize = rng.below(NonZero::new(options.len()).expect("Options cannot be empty")) as usize;
         return options[selected](rng);
     }
 
@@ -176,14 +180,14 @@ impl RiscVInstructionMutator {
             if program_empty {
                 return 0;
             }
-            rng.below(max(program_len as u64, 1)) as usize
+            rng.below(NonZero::new(program_len).expect("Program can't be empty")) as usize
         };
 
         let valid_pos = |rng: &mut Rng| -> Option<usize> {
             if program_empty {
                 return None;
             }
-            Some(rng.below(program_len as u64) as usize)
+            Some(rng.below(NonZero::new(program_len).expect("Program can't be empty")) as usize)
         };
 
         match mutation {
@@ -208,7 +212,7 @@ impl RiscVInstructionMutator {
                 if inst.arguments().is_empty() {
                     return None;
                 }
-                let old_arg = rng.choose(inst.arguments());
+                let old_arg = rng.choose(inst.arguments()).expect("No arg found");
                 let arg_spec = old_arg.spec();
                 // Keep generating arguments until we find a new one.
                 loop {
@@ -230,7 +234,7 @@ impl RiscVInstructionMutator {
             }
             Mutation::RepeatSeveral => {
                 let pos = valid_pos(rng)?;
-                for _ in 0..(rng.below(4) + 1) {
+                for _ in 0..(rng.below(nonzero!(4)) + 1) {
                     program.insert(pos, program[pos].clone());
                 }
             }
@@ -319,8 +323,8 @@ mod tests {
     use std::cmp::min;
 
     use libafl::prelude::MutationResult;
-    use libafl::prelude::Rand;
-    use libafl::prelude::Xoshiro256StarRand;
+    use libafl_bolts::prelude::Rand;
+    use libafl_bolts::prelude::Xoshiro256StarRand;
 
     use crate::assembler::assemble_instructions;
     use crate::generator::InstGenerator;
@@ -397,7 +401,7 @@ mod tests {
         /// Does not guarantee that it generates any instructions.
         fn fill_random_inst(&mut self) {
             let generator = InstGenerator::new();
-            let num_insts = self.rng.below(40) as u32;
+            let num_insts = self.rng.below(nonzero!(40)) as u32;
             self.data = assemble_instructions(&generator.generate_instructions(
                 &mut self.rng,
                 &instructions::sets::riscv_g(),

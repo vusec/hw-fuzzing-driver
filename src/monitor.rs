@@ -3,8 +3,9 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use libafl::prelude::current_time;
-use libafl::prelude::{format_duration_hms, ClientId, ClientStats, Monitor};
+use libafl_bolts::{current_time, format_duration_hms};
+use libafl::prelude::{ClientStats, Monitor};
+use libafl_bolts::ClientId;
 
 use crate::fuzz_ui::FuzzUI;
 
@@ -24,21 +25,26 @@ impl Monitor for HWFuzzMonitor {
         &mut self.client_stats
     }
 
-    /// the client monitor
+    /// The client monitor
     fn client_stats(&self) -> &[ClientStats] {
         &self.client_stats
     }
 
     /// Time this fuzzing run stated
-    fn start_time(&mut self) -> Duration {
+    fn start_time(&self) -> Duration {
         self.start_time
     }
 
-    fn display(&mut self, _event_msg: String, sender_id: ClientId) {
+    /// Time this fuzzing run stated
+    fn set_start_time(&mut self, time: Duration) {
+        self.start_time = time;
+    }
+
+    fn display(&mut self, _event_msg: &str, sender_id: ClientId) {
         let execs = self.total_execs();
         let execs_per_sec = self.execs_per_sec_pretty();
         {
-            let client = self.client_stats_mut_for(sender_id).clone();
+            let client = self.client_stats_for(sender_id).clone();
 
             let mut ui = self.ui.lock().unwrap();
             let data = ui.data();

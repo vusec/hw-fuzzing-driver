@@ -1,4 +1,7 @@
 use crate::instructions::{Argument, ArgumentSpec, Instruction, InstructionTemplate};
+use std::env;
+use libafl_bolts::nonzero;
+use std::num::NonZero;
 
 /// Generates random RISC-V instructions.
 #[derive(Default)]
@@ -6,9 +9,9 @@ pub struct InstGenerator {
     /// List of known arguments the generator should try to reuse.
     known_args: Vec<Argument>,
     // Chance (0-100) of reusing a known arg value in the program.
-    reuse_chance: u64,
+    reuse_chance: usize,
     // Chance (0-100) of choosing a power of two as arg value.
-    power_of_two_chance: u64,
+    power_of_two_chance: usize,
 }
 
 impl InstGenerator {
@@ -24,12 +27,12 @@ impl InstGenerator {
         self.known_args.append(&mut args.to_vec())
     }
 
-    pub fn generate_argument<R: libafl::prelude::Rand>(
+    pub fn generate_argument<R: libafl_bolts::prelude::Rand>(
         &self,
         rand: &mut R,
         arg: &'static ArgumentSpec,
     ) -> Argument {
-        if rand.below(100) < self.reuse_chance {
+        if rand.below(nonzero!(100)) < self.reuse_chance {
             let filtered = self
                 .known_args
                 .iter()
@@ -37,18 +40,18 @@ impl InstGenerator {
             let options = filtered.collect::<Vec<&Argument>>();
             if !options.is_empty() {
                 let chosen = rand.choose(options).clone();
-                return Argument::new(arg, chosen.value());
+                return Argument::new(arg, chosen.expect("No arg found").value());
             }
         }
 
-        if rand.below(100) < self.power_of_two_chance {
-            Argument::new(arg, 1 << rand.below(arg.length() as u64) as u32)
+        if rand.below(nonzero!(100)) < self.power_of_two_chance {
+            Argument::new(arg, 1 << rand.below(NonZero::new(arg.length() as usize).expect("Arg len cannot be null")))
         } else {
-            Argument::new(arg, rand.below(arg.max_value() as u64) as u32)
+            Argument::new(arg, rand.below(NonZero::new(arg.max_value() as usize).expect("Arg max_value cannot be null")) as u32)
         }
     }
 
-    pub fn generate_instruction<R: libafl::prelude::Rand>(
+    pub fn generate_instruction<R: libafl_bolts::prelude::Rand>(
         &self,
         rand: &mut R,
         insts: &Vec<&'static InstructionTemplate>,
@@ -57,13 +60,13 @@ impl InstGenerator {
         let template = rand.choose(insts.iter());
 
         let mut arguments = Vec::<Argument>::new();
-        for arg in template.operands() {
+        for arg in template.expect("No template").operands() {
             arguments.push(self.generate_argument(rand, arg));
         }
-        Instruction::new(template, arguments)
+        Instruction::new(template.expect("No template"), arguments)
     }
 
-    pub fn generate_instructions<R: libafl::prelude::Rand>(
+    pub fn generate_instructions<R: libafl_bolts::prelude::Rand>(
         &self,
         rand: &mut R,
         insts: &Vec<&'static InstructionTemplate>,

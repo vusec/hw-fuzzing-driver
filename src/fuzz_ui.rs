@@ -3,7 +3,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use libafl::prelude::{current_time, format_duration_hms};
+use libafl_bolts::{current_time, format_duration_hms};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     io::{self, Stdout},

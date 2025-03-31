@@ -7,24 +7,16 @@ use std::{
     process,
     sync::{Arc, Mutex},
 };
-
+use libafl::observers::CanTrack;
 use clap::Parser;
 use libafl::{
-    bolts::{
-        current_nanos,
-        rands::StdRand,
-        shmem::{ShMem, ShMemProvider, UnixShMemProvider},
-        tuples::tuple_list,
-        AsMutSlice,
-    },
     corpus::{OnDiskCorpus},
-    executors::forkserver::{ForkserverExecutor, TimeoutForkserverExecutor},
+    executors::forkserver::{ForkserverExecutor},
     feedback_or,
     feedbacks::{CrashFeedback, MaxMapFeedback, TimeFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
     mutators::StdScheduledMutator,
     observers::{HitcountsMapObserver, StdMapObserver, TimeObserver},
-    prelude::current_time,
     schedulers::{
         powersched::PowerSchedule, IndexesLenTimeMinimizerScheduler, StdWeightedScheduler,
     },
@@ -32,12 +24,22 @@ use libafl::{
     state::StdState,
     Error, Evaluator,
 };
-use libafl::{
-    events::ProgressReporter,
-    prelude::{Cores, EventConfig, Launcher, LlmpRestartingEventManager},
+use libafl_bolts::{
+    current_nanos,
+    rands::StdRand,
+    shmem::{ShMem, ShMemProvider, UnixShMemProvider},
+    tuples::tuple_list,
+    current_time,
+    core_affinity::{Cores},
+    AsSliceMut,
+    tuples::Handled,
 };
 use libafl::{
-    prelude::{ondisk::OnDiskMetadataFormat, CoreId},
+    events::ProgressReporter,
+    prelude::{EventConfig, Launcher, LlmpRestartingEventManager, LlmpShouldSaveState, ClientDescription, NopTargetBytesConverter},
+};
+use libafl::{
+    prelude::{ondisk::OnDiskMetadataFormat},
 };
 use nix::sys::signal::Signal;
 use riscv_mutator::{
@@ -174,9 +176,9 @@ pub fn main() {
     let arguments = &args.arguments[1..];
 
     let scheduler_map: HashMap<String, PowerSchedule> = HashMap::from([
-        ("explore".to_owned(), PowerSchedule::EXPLORE),
-        ("fast".to_owned(), PowerSchedule::FAST),
-        ("exploit".to_owned(), PowerSchedule::EXPLOIT),
+        ("explore".to_owned(), PowerSchedule::explore()),
+        ("fast".to_owned(), PowerSchedule::fast()),
+        ("exploit".to_owned(), PowerSchedule::exploit()),
     ]);
     let scheduler = scheduler_map.get(&args.scheduler);
     if scheduler.is_none() {
@@ -243,26 +245,32 @@ fn fuzz(
     let shmem_provider = UnixShMemProvider::new().expect("Failed to init shared memory");
     let mut shmem_provider_client = shmem_provider.clone();
 
-    let mut run_client =
-        |_state: Option<_>, mut mgr: LlmpRestartingEventManager<_, _>, core_id: CoreId| {
+    // Create an observation channel to keep track of the execution time
+    let time_observer = TimeObserver::new("time");
+    let time_ref = time_observer.handle();
+
+    let mut run_client = |_state: Option<_>,
+                          mut mgr: LlmpRestartingEventManager<_, _, _, _, _>,
+                          client_description: ClientDescription| {
             // The coverage map shared between observer and executor
             let mut shmem = shmem_provider_client.new_shmem(MAP_SIZE).unwrap();
 
             // let the forkserver know the shmid
             shmem.write_to_env("__AFL_SHM_ID").unwrap();
-            let shmem_buf = shmem.as_mut_slice();
+            let shmem_buf = shmem.as_slice_mut();
 
             // To let know the AFL++ binary that we have a big map
             std::env::set_var("AFL_MAP_SIZE", format!("{}", MAP_SIZE));
 
             // Create an observation channel using the hitcounts map of AFL++
-            let edges_observer =
-                unsafe { HitcountsMapObserver::new(StdMapObserver::new("shared_mem", shmem_buf)) };
+            let edges_observer = unsafe {
+                HitcountsMapObserver::new(StdMapObserver::new("shared_mem", shmem_buf))
+                    .track_indices()
+            };
 
-            // Create an observation channel to keep track of the execution time
-            let time_observer = TimeObserver::new("time");
+            let time_observer = time_observer.clone();
 
-            let map_feedback = MaxMapFeedback::tracking(&edges_observer, true, false);
+            let map_feedback = MaxMapFeedback::new(&edges_observer);
 
             let calibration = DummyCalibration::new(&map_feedback);
 
@@ -272,15 +280,15 @@ fn fuzz(
                 // New maximization map feedback linked to the edges observer and the feedback state
                 map_feedback,
                 // Time feedback, this one does not need a feedback state
-                TimeFeedback::with_observer(&time_observer)
+                TimeFeedback::new(&time_observer)
             );
 
             // Create client specific directories to avoid race conditions when
             // writing the corpus to disk.
             let mut corpus_dir = base_corpus_dir.clone();
-            corpus_dir.push(format!("{}", core_id.0));
+            corpus_dir.push(format!("{}", client_description.core_id().0));
             let mut objective_dir = base_objective_dir.clone();
-            objective_dir.push(format!("{}", core_id.0));
+            objective_dir.push(format!("{}", client_description.core_id().0));
 
             // A feedback to choose if an input is a solution or not
             let mut objective = CrashFeedback::new();
@@ -305,24 +313,25 @@ fn fuzz(
 
             // A minimization+queue policy to get testcasess from the corpus
             let scheduler = IndexesLenTimeMinimizerScheduler::new(
+                &edges_observer,
                 StdWeightedScheduler::with_schedule(&mut state, &edges_observer, schedule),
             );
 
             // A fuzzer with feedbacks and a corpus scheduler
             let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
-            let forkserver = ForkserverExecutor::builder()
+            let mut executor = ForkserverExecutor::builder()
                 .program(executable.clone())
                 .debug_child(debug_child)
                 .parse_afl_cmdline(arguments)
                 .coverage_map_size(MAP_SIZE)
                 .is_persistent(false)
                 .is_deferred_frksrv(true)
+                .timeout(timeout)
+                .kill_signal(signal)
+                .target_bytes_converter(NopTargetBytesConverter::<ProgramInput>::new())
                 .build_dynamic_map(edges_observer, tuple_list!(time_observer))
                 .unwrap();
-
-            let mut executor = TimeoutForkserverExecutor::with_signal(forkserver, timeout, signal)
-                .expect("Failed to create the executor.");
 
             // Load the initial seeds from the user directory.
             // state
@@ -350,7 +359,6 @@ fn fuzz(
             let mut stages = tuple_list!(calibration, power);
 
             // Main fuzzing loop.
-            let mut last = current_time();
             let monitor_timeout = Duration::from_secs(1);
 
             loop {
@@ -358,11 +366,11 @@ fn fuzz(
                 if fuzz_err.is_err() {
                     log::error!("fuzz_one error: {}", fuzz_err.err().unwrap());
                 }
-                let last_err = mgr.maybe_report_progress(&mut state, last, monitor_timeout);
+                let last_err = mgr.maybe_report_progress(&mut state, monitor_timeout);
                 if last_err.is_err() {
                     log::error!("last_err error: {}", last_err.err().unwrap());
                 } else {
-                    last = last_err.ok().unwrap()
+                    last_err.ok().unwrap()
                 }
 
                 // If we have a simple UI, we need to manually list all causes
@@ -387,8 +395,9 @@ fn fuzz(
         .configuration(conf)
         .cores(&cores)
         .monitor(monitor)
-        .serialize_state(false)
+        .serialize_state(LlmpShouldSaveState::Never)
         .broker_port(actual_port)
+        .time_ref(Some(time_ref))
         .run_client(&mut run_client);
 
     let mut launcher_log_file = out_dir.clone();

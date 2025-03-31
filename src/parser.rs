@@ -1,4 +1,5 @@
 use crate::instructions::{Instruction, InstructionTemplate};
+use libafl_bolts::nonzero;
 
 pub fn parse_instructions(
     input: &Vec<u8>,
@@ -50,7 +51,7 @@ mod tests {
             rng.set_seed(i);
 
             let mut input = Vec::<u8>::new();
-            for _ in 0..rng.below(100) {
+            for _ in 0..rng.below(nonzero!(100)) {
                 input.push((rng.next() % 256) as u8);
             }
 

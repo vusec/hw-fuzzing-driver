@@ -15,8 +15,8 @@ pub fn assemble_instructions(input: &Vec<Instruction>) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use libafl::prelude::Rand;
-    use libafl::prelude::Xoshiro256StarRand;
+    use libafl_bolts::prelude::Rand;
+    use libafl_bolts::prelude::Xoshiro256StarRand;
 
     use crate::generator::InstGenerator;
     use crate::instructions;
@@ -66,7 +66,7 @@ mod tests {
 
             let mut insts = Vec::<Instruction>::new();
 
-            for _ in 0..rng.below(5) {
+            for _ in 0..rng.below(nonzero!(5)) {
                 let inst = generator.generate_instruction::<Xoshiro256StarRand>(
                     &mut rng,
                     &instructions::sets::riscv_g(),
