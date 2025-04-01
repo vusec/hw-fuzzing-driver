@@ -1,7 +1,11 @@
 use std::num::NonZero;
+use std::env;
+use std::marker::PhantomData;
 use crate::mutator::alloc::borrow::Cow;
+use core::fmt::Debug;
 
 use libafl_bolts::nonzero;
+use libafl_bolts::tuples::NamedTuple;
 use libafl::prelude::*;
 use libafl_bolts::tuples::tuple_list_type;
 use libafl_bolts::prelude::{tuple_list, Rand};
@@ -308,20 +312,89 @@ pub fn all_riscv_mutations() -> RiscVMutationList {
     )
 }
 
-/// All reducing mutations
-pub type RiscVReducingMutationList = tuple_list_type!(
-    RiscVInstructionMutator,
-    RiscVInstructionMutator,
-    RiscVInstructionMutator,
-);
+/// A [`Mutator`] that schedules one of the embedded mutations on each call.
+#[derive(Debug)]
+pub struct RiscvScheduledMutator<MT> {
+    name: Cow<'static, str>,
+    mutations: MT,
+    has_snippet: bool,
+    max_stack_pow: usize,
+}
 
-/// All mutations used to minimize test cases.
-pub fn reducing_mutations() -> RiscVReducingMutationList {
-    tuple_list!(
-        RiscVInstructionMutator::new(Mutation::Remove),
-        RiscVInstructionMutator::new(Mutation::Remove),
-        RiscVInstructionMutator::new(Mutation::ReplaceWithNop),
-    )
+impl<MT> Named for RiscvScheduledMutator<MT> {
+    fn name(&self) -> &Cow<'static, str> {
+        &self.name
+    }
+}
+
+impl<I, MT, S> Mutator<I, S> for RiscvScheduledMutator<MT>
+where
+    MT: MutatorsTuple<I, S>,
+    S: HasRand,
+{
+    #[inline]
+    fn mutate(&mut self, state: &mut S, input: &mut I) -> Result<MutationResult, Error> {
+        self.scheduled_mutate(state, input)
+    }
+}
+
+impl<MT> ComposedByMutations for RiscvScheduledMutator<MT> {
+    type Mutations = MT;
+    /// Get the mutations
+    #[inline]
+    fn mutations(&self) -> &MT {
+        &self.mutations
+    }
+
+    // Get the mutations (mutable)
+    #[inline]
+    fn mutations_mut(&mut self) -> &mut MT {
+        &mut self.mutations
+    }
+}
+
+impl<I, MT, S> ScheduledMutator<I, S> for RiscvScheduledMutator<MT>
+where
+    MT: MutatorsTuple<I, S>,
+    S: HasRand,
+{
+    /// Compute the number of iterations used to apply stacked mutations
+    fn iterations(&self, state: &mut S, _: &I) -> u64 {
+        1 << (1 + state.rand_mut().below_or_zero(self.max_stack_pow))
+    }
+
+    /// Get the next mutation to apply
+    fn schedule(&self, state: &mut S, _: &I) -> MutationId {
+        debug_assert_ne!(self.mutations.len(), 0);
+        let len = if self.has_snippet {
+            self.mutations.len()
+        } else {
+            // Snippet is the last mutation of the tuple, so we simply
+            // make sure that we never select it.
+            self.mutations.len() - 1
+        };
+        state
+            .rand_mut()
+            .below(unsafe { NonZero::new(len).unwrap_unchecked() })
+            .into()
+    }
+}
+
+impl<MT> RiscvScheduledMutator<MT>
+where
+    MT: NamedTuple,
+{
+    pub fn new(mutations: MT) -> Self {
+        RiscvScheduledMutator {
+            name: Cow::from(format!(
+                "RiscvScheduledMutator[{}]",
+                mutations.names().join(", ")
+            )),
+            mutations,
+            has_snippet: !env::var("PHANTOM_TRAILS_NO_SNIPPET").is_ok(),
+            max_stack_pow: 7,
+        }
+    }
 }
 
 #[cfg(test)]

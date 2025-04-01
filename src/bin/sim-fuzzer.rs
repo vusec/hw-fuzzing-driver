@@ -54,7 +54,7 @@ use riscv_mutator::{
         Argument, Instruction,
     },
     monitor::HWFuzzMonitor,
-    mutator::{all_riscv_mutations},
+    mutator::{RiscvScheduledMutator, all_riscv_mutations},
     program_input::ProgramInput,
 };
 
@@ -307,7 +307,7 @@ fn fuzz(
             )
             .unwrap();
 
-            let mutator = StdScheduledMutator::new(all_riscv_mutations());
+            let mutator = RiscvScheduledMutator::new(all_riscv_mutations());
 
             let power = StdPowerMutationalStage::new(mutator);
 
