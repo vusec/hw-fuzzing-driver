@@ -1,4 +1,5 @@
 use crate::instructions::{Argument, ArgumentSpec, Instruction, InstructionTemplate};
+use std::env;
 
 /// Generates random RISC-V instructions.
 #[derive(Default)]
@@ -13,10 +14,12 @@ pub struct InstGenerator {
 
 impl InstGenerator {
     pub fn new() -> Self {
+        let reuse_args = !env::var("PHANTOM_TRAILS_NO_ARG_REUSE").is_ok();
+
         Self {
             known_args: Vec::<Argument>::new(),
-            reuse_chance: 50,
-            power_of_two_chance: 50,
+            reuse_chance: if reuse_args { 50 } else { 0 },
+            power_of_two_chance: if reuse_args { 50 } else { 0 },
         }
     }
 
