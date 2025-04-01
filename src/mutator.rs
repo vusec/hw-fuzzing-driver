@@ -239,7 +239,13 @@ impl RiscVInstructionMutator {
                 }
             }
             Mutation::Remove => {
-                program.remove(valid_pos(rng)?);
+                // Don't remove if it's too small.
+                if program_len >= 4 {
+                    program.remove(valid_pos(rng)?);
+                } else {
+                    // TODO: If we can't remove, we add - does that make sense?
+                    program.insert(add_pos(rng), self.gen_inst(program, rng));
+                }
             }
             Mutation::ReplaceWithNop => {
                 let pos = valid_pos(rng)?;

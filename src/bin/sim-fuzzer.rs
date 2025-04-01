@@ -329,6 +329,7 @@ fn fuzz(
                 .is_deferred_frksrv(true)
                 .timeout(timeout)
                 .kill_signal(signal)
+                .min_input_size(4)
                 .target_bytes_converter(NopTargetBytesConverter::<ProgramInput>::new())
                 .build_dynamic_map(edges_observer, tuple_list!(time_observer))
                 .unwrap();
