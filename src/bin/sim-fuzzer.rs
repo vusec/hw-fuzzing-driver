@@ -58,6 +58,8 @@ use riscv_mutator::{
 
 use log::{LevelFilter, Metadata, Record};
 
+use riscv_mutator::external_generator::ExternalGeneratorStage;
+
 struct FuzzLogger;
 
 pub const FUZZING_LOG_DIR_VAR: &'static str = "FUZZING_LOG_DIR";
@@ -107,6 +109,8 @@ struct Args {
     mutations: String,
     #[arg(long, default_value_t = 0)]
     port: u16,
+    #[arg(long)]
+    external_generator: Option<String>,
 }
 
 pub fn main() {
@@ -208,6 +212,7 @@ pub fn main() {
         simple_ui,
         scheduler.copied(),
         port,
+        args.external_generator,
     )
     .expect("An error occurred while fuzzing");
 }
@@ -227,6 +232,7 @@ fn fuzz(
     simple_ui: bool,
     schedule: Option<PowerSchedule>,
     port: Option<u16>,
+    external_generator: Option<String>,
 ) -> Result<(), Error> {
     let ui: Arc<Mutex<FuzzUI>> = Arc::new(Mutex::new(FuzzUI::new(simple_ui)));
     const MAP_SIZE: usize = 2_621_440;
@@ -299,10 +305,6 @@ fn fuzz(
             )
             .unwrap();
 
-            let mutator = RiscvScheduledMutator::new(all_riscv_mutations());
-
-            let power = StdPowerMutationalStage::new(mutator);
-
             // A minimization+queue policy to get testcasess from the corpus
             let scheduler = IndexesLenTimeMinimizerScheduler::new(
                 StdWeightedScheduler::with_schedule(&mut state, &edges_observer, schedule),
@@ -346,29 +348,56 @@ fn fuzz(
                 .add_input(&mut state, &mut executor, &mut mgr, init)
                 .expect("Failed to load initial inputs");
 
-            // First calibrate the initial seed and then mutate.
-            let mut stages = tuple_list!(calibration, power);
-
             // Main fuzzing loop.
             let mut last = current_time();
             let monitor_timeout = Duration::from_secs(1);
 
-            loop {
-                let fuzz_err = fuzzer.fuzz_one(&mut stages, &mut executor, &mut state, &mut mgr);
-                if fuzz_err.is_err() {
-                    log::error!("fuzz_one error: {}", fuzz_err.err().unwrap());
-                }
-                let last_err = mgr.maybe_report_progress(&mut state, last, monitor_timeout);
-                if last_err.is_err() {
-                    log::error!("last_err error: {}", last_err.err().unwrap());
-                } else {
-                    last = last_err.ok().unwrap()
-                }
+            if let Some(ref gen_cmd) = external_generator {
+                // External generator mode: no mutation, the external program
+                // generates fresh programs each iteration.
+                let ext_stage = ExternalGeneratorStage::new(gen_cmd.clone());
+                let mut stages = tuple_list!(calibration, ext_stage);
 
-                // If we have a simple UI, we need to manually list all causes
-                // to check if we found all bugs.
-                if simple_ui {
-                    list_causes(start_time);
+                loop {
+                    let fuzz_err = fuzzer.fuzz_one(&mut stages, &mut executor, &mut state, &mut mgr);
+                    if let Err(e) = fuzz_err {
+                        // In external generator mode, errors are fatal: if the
+                        // generator fails we must not silently keep looping on
+                        // stale corpus entries.
+                        panic!("External generator fuzz_one failed: {e}");
+                    }
+                    let last_err = mgr.maybe_report_progress(&mut state, last, monitor_timeout);
+                    if last_err.is_err() {
+                        log::error!("last_err error: {}", last_err.err().unwrap());
+                    } else {
+                        last = last_err.ok().unwrap()
+                    }
+
+                    if simple_ui {
+                        list_causes(start_time);
+                    }
+                }
+            } else {
+                // Normal mutation-based fuzzing.
+                let mutator = RiscvScheduledMutator::<ProgramInput, _, _>::new(all_riscv_mutations());
+                let power = StdPowerMutationalStage::new(mutator);
+                let mut stages = tuple_list!(calibration, power);
+
+                loop {
+                    let fuzz_err = fuzzer.fuzz_one(&mut stages, &mut executor, &mut state, &mut mgr);
+                    if fuzz_err.is_err() {
+                        log::error!("fuzz_one error: {}", fuzz_err.err().unwrap());
+                    }
+                    let last_err = mgr.maybe_report_progress(&mut state, last, monitor_timeout);
+                    if last_err.is_err() {
+                        log::error!("last_err error: {}", last_err.err().unwrap());
+                    } else {
+                        last = last_err.ok().unwrap()
+                    }
+
+                    if simple_ui {
+                        list_causes(start_time);
+                    }
                 }
             }
         };

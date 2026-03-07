@@ -77,19 +77,20 @@ pub fn list_causes(start_time: std::time::Duration) -> CausesList {
     }
     missing.sort();
 
+    // Always write results file with found vulns so far.
+    let mut results =
+        File::create(get_found_all_path()).expect("Failed to create found_all_path");
+
+    for case in &case_list {
+        results
+            .write_all(
+                format!("{} $ {}\n", case.time_to_exposure.as_secs(), case.cause).as_bytes(),
+            )
+            .expect("Failed to write results");
+    }
+    results.flush().expect("Failed to flush results file");
+
     if missing.is_empty() {
-        let mut results =
-            File::create(get_found_all_path()).expect("Failed to create found_all_path");
-
-        for case in &case_list {
-            results
-                .write_all(
-                    format!("{} $ {}\n", case.time_to_exposure.as_secs(), case.cause).as_bytes(),
-                )
-                .expect("Failed to write results");
-        }
-        results.flush().expect("Failed to flush results file");
-
         // Run killall to stop the fuzzer.
         // FIXME: That cann't be the only way to stop the fuzzer, but it seems
         // it is...

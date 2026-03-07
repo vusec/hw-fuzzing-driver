@@ -15,7 +15,7 @@ pub struct HWFuzzMonitor {
     client_stats: Vec<ClientStats>,
     ui: Arc<Mutex<FuzzUI>>,
     iterations_log_path: String,
-    last_iterations_logged: u64,
+    last_time_logged: u64,
 }
 
 impl Monitor for HWFuzzMonitor {
@@ -70,11 +70,10 @@ impl Monitor for HWFuzzMonitor {
 
             let time_since_start = current_time() - self.start_time;
 
-            // Only log every few hundred iterations the time to avoid creating
-            // a too large log file.
-            let log_every_n_iterations = 500;
-            if execs > self.last_iterations_logged + log_every_n_iterations {
-                self.last_iterations_logged = execs;
+            // Log every second to get time-aligned coverage data.
+            let current_secs = time_since_start.as_secs();
+            if current_secs > self.last_time_logged {
+                self.last_time_logged = current_secs;
 
                 // Write the current time and iterations to a log file. This can
                 // be used to find infer iterations-to-exposure from the
@@ -151,7 +150,7 @@ impl HWFuzzMonitor {
             client_stats: vec![],
             ui,
             iterations_log_path: log_path,
-            last_iterations_logged: 0,
+            last_time_logged: 0,
         }
     }
 }
