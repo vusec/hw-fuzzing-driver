@@ -43,7 +43,7 @@ pub struct FuzzUIData {
 
 impl FuzzUIData {
     pub fn get_max_coverage(&self) -> f64 {
-        self.max_coverage.last().ok_or((0.0, 0.0)).unwrap().1
+        self.max_coverage.last().map_or(0.0, |v| v.1)
     }
 
     pub fn add_max_coverage(&mut self, value: f64) {
