@@ -133,13 +133,11 @@ pub mod sets {
         let mut result = Vec::<&'static InstructionTemplate>::new();
         result.append(&mut rv64_i::INSTS.to_vec());
         result.append(&mut rv64_a::INSTS.to_vec());
-        result.append(&mut rv64_d::INSTS.to_vec());
-        result.append(&mut rv64_f::INSTS.to_vec());
+        // rv64_d, rv64_f disabled: mstatus.FS=00 on both C910 and BOOM
         result.append(&mut rv64_m::INSTS.to_vec());
         result.append(&mut rv_i::INSTS.to_vec());
         result.append(&mut rv_a::INSTS.to_vec());
-        result.append(&mut rv_d::INSTS.to_vec());
-        result.append(&mut rv_f::INSTS.to_vec());
+        // rv_d, rv_f disabled: see above
         result.append(&mut rv_m::INSTS.to_vec());
         result
     }

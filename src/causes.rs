@@ -29,8 +29,15 @@ fn get_expected() -> HashSet<String> {
     let buf = BufReader::new(file);
     buf.lines()
         .map(|l| l.expect("Could not parse line"))
+        .map(|l| l.trim().to_owned())
         .filter(|l| !l.is_empty())
         .collect()
+}
+
+fn classification_matches_prefix(classification: &str, prefix: &str) -> bool {
+    classification == prefix
+        || (classification.starts_with(prefix)
+            && classification.as_bytes().get(prefix.len()) == Some(&b' '))
 }
 
 pub struct CausesList {
@@ -61,7 +68,14 @@ pub fn list_causes(start_time: std::time::Duration) -> CausesList {
             .unwrap();
         let display_str = cause_str.replace("_", " ");
 
-        expected.remove(&display_str);
+        let matched = expected
+            .iter()
+            .filter(|prefix| classification_matches_prefix(&display_str, prefix))
+            .cloned()
+            .collect::<Vec<_>>();
+        for prefix in matched {
+            expected.remove(&prefix);
+        }
 
         case_list.push(TestCaseData {
             cause: display_str.to_string(),
