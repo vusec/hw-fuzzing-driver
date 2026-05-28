@@ -89,8 +89,8 @@ static LOGGER: FuzzLogger = FuzzLogger;
 #[command(author, version, about, long_about = None)]
 struct Args {
     arguments: Vec<String>,
-    #[arg(short, long, default_value = "in")]
-    input: String,
+    #[arg(short, long)]
+    input: Option<String>,
     #[arg(short, long, default_value = "out")]
     out: String,
     #[arg(short, long, default_value_t = 60000)]
@@ -163,11 +163,24 @@ pub fn main() {
     let mut queue_dir = out_dir.clone();
     queue_dir.push("queue");
 
-    let in_dir = PathBuf::from(args.input);
-    if !in_dir.is_dir() {
-        println!("In dir at {:?} is not a valid directory!", &in_dir);
-        return;
-    }
+    let seed_dir: Option<PathBuf> = match args.input {
+        Some(ref s) => {
+            let p = PathBuf::from(s);
+            if !p.is_dir() {
+                eprintln!("Seed dir at {:?} is not a valid directory!", &p);
+                process::exit(1);
+            }
+            let has_files = std::fs::read_dir(&p)
+                .expect("Failed to read seed dir")
+                .any(|e| e.map(|e| e.path().is_file()).unwrap_or(false));
+            if !has_files {
+                eprintln!("Seed dir at {:?} contains no files!", &p);
+                process::exit(1);
+            }
+            Some(p)
+        }
+        None => None,
+    };
 
     let timeout = Duration::from_millis(args.timeout);
     let executable = args.arguments.first().unwrap();
@@ -202,7 +215,7 @@ pub fn main() {
         out_dir,
         queue_dir,
         crashes,
-        &in_dir,
+        seed_dir,
         timeout,
         executable,
         debug_child,
@@ -222,7 +235,7 @@ fn fuzz(
     out_dir: PathBuf,
     base_corpus_dir: PathBuf,
     base_objective_dir: PathBuf,
-    _seed_dir: &PathBuf, // Currently unused because seed parsing not implemented.
+    seed_dir: Option<PathBuf>,
     timeout: Duration,
     executable: &String,
     debug_child: bool,
@@ -326,27 +339,27 @@ fn fuzz(
             let mut executor = TimeoutForkserverExecutor::with_signal(forkserver, timeout, signal)
                 .expect("Failed to create the executor.");
 
-            // Load the initial seeds from the user directory.
-            // state
-            //     .load_initial_inputs(&mut fuzzer, &mut executor, &mut mgr, &[seed_dir.clone()])
-            //     .unwrap_or_else(|_| {
-            //         println!("Failed to load initial corpus at {:?}", &seed_dir);
-            //         process::exit(0);
-            //     });
-
-            let nop = Instruction::new(
-                &ADDI,
-                vec![
-                    Argument::new(&args::RD, 0u32),
-                    Argument::new(&args::RS1, 0u32),
-                    Argument::new(&args::IMM12, 0u32),
-                ],
-            );
-
-            let init = ProgramInput::new([nop].to_vec());
-            fuzzer
-                .add_input(&mut state, &mut executor, &mut mgr, init)
-                .expect("Failed to load initial inputs");
+            if let Some(ref sd) = seed_dir {
+                state
+                    .load_initial_inputs(&mut fuzzer, &mut executor, &mut mgr, &[sd.clone()])
+                    .unwrap_or_else(|e| {
+                        eprintln!("Failed to load seeds from {:?}: {}", sd, e);
+                        process::exit(1);
+                    });
+            } else {
+                let nop = Instruction::new(
+                    &ADDI,
+                    vec![
+                        Argument::new(&args::RD, 0u32),
+                        Argument::new(&args::RS1, 0u32),
+                        Argument::new(&args::IMM12, 0u32),
+                    ],
+                );
+                let init = ProgramInput::new([nop].to_vec());
+                fuzzer
+                    .add_input(&mut state, &mut executor, &mut mgr, init)
+                    .expect("Failed to load initial NOP input");
+            }
 
             // Main fuzzing loop.
             let mut last = current_time();
