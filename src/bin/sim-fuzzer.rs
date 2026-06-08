@@ -54,6 +54,7 @@ use riscv_mutator::{
     monitor::HWFuzzMonitor,
     mutator::{RiscvScheduledMutator, all_riscv_mutations},
     program_input::ProgramInput,
+    saving_executor::SavingExecutor,
 };
 
 use log::{LevelFilter, Metadata, Record};
@@ -111,6 +112,8 @@ struct Args {
     port: u16,
     #[arg(long)]
     external_generator: Option<String>,
+    #[arg(long, default_value_t = false)]
+    save_all_samples: bool,
 }
 
 pub fn main() {
@@ -159,6 +162,16 @@ pub fn main() {
             .expect("Failed to create 'inputs' subdirectory directory.");
         std::env::set_var("INPUT_STORAGE", inputs_dir.as_os_str());
     }
+
+    let all_samples_dir = if args.save_all_samples {
+        let mut all_dir = out_dir.clone();
+        all_dir.push("all");
+        std::fs::create_dir_all(all_dir.clone())
+            .expect("Failed to create 'all' subdirectory.");
+        Some(all_dir)
+    } else {
+        None
+    };
 
     let mut queue_dir = out_dir.clone();
     queue_dir.push("queue");
@@ -226,6 +239,7 @@ pub fn main() {
         scheduler.copied(),
         port,
         args.external_generator,
+        all_samples_dir,
     )
     .expect("An error occurred while fuzzing");
 }
@@ -246,6 +260,7 @@ fn fuzz(
     schedule: Option<PowerSchedule>,
     port: Option<u16>,
     external_generator: Option<String>,
+    all_samples_dir: Option<PathBuf>,
 ) -> Result<(), Error> {
     let ui: Arc<Mutex<FuzzUI>> = Arc::new(Mutex::new(FuzzUI::new(simple_ui)));
     const MAP_SIZE: usize = 2_621_440;
@@ -301,6 +316,13 @@ fn fuzz(
             let mut objective_dir = base_objective_dir.clone();
             objective_dir.push(format!("{}", core_id.0));
 
+            let save_dir = all_samples_dir.as_ref().map(|base| {
+                let dir = base.join(format!("{}", core_id.0));
+                std::fs::create_dir_all(&dir)
+                    .expect("Failed to create 'all/<core_id>' subdirectory.");
+                dir
+            });
+
             // A feedback to choose if an input is a solution or not
             let mut objective = CrashFeedback::new();
 
@@ -336,8 +358,9 @@ fn fuzz(
                 .build_dynamic_map(edges_observer, tuple_list!(time_observer))
                 .unwrap();
 
-            let mut executor = TimeoutForkserverExecutor::with_signal(forkserver, timeout, signal)
+            let inner_executor = TimeoutForkserverExecutor::with_signal(forkserver, timeout, signal)
                 .expect("Failed to create the executor.");
+            let mut executor = SavingExecutor::new(inner_executor, save_dir);
 
             if let Some(ref sd) = seed_dir {
                 state
